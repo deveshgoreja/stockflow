@@ -1,0 +1,22 @@
+[project]
+name = "stockflow"
+version = "1.0.0"
+description = "Inventory and order management system with concurrency-safe stock control"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["frontend"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "N", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+
+[tool.ruff.lint.per-file-ignores]
+# SQLAlchemy's declarative __mapper_args__ / __table_args__ are plain class attributes by convention.
+"app/models/*" = ["RUF012"]
