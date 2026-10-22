@@ -60,12 +60,13 @@ def apply_stock_change(
     new_quantity = inventory.quantity + change
     if new_quantity < 0:
         raise ConflictError(
-            f"Insufficient stock for product {inventory.product_id}",
+            f"Insufficient stock for {inventory.product.sku}",
             code="INSUFFICIENT_STOCK",
             details={
                 "shortages": [
                     {
                         "product_id": inventory.product_id,
+                        "sku": inventory.product.sku,
                         "requested": -change,
                         "available": inventory.quantity,
                     }
