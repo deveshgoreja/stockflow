@@ -1,6 +1,6 @@
 # StockFlow
 
-[![CI](https://github.com/__OWNER__/stockflow/actions/workflows/ci.yml/badge.svg)](https://github.com/__OWNER__/stockflow/actions/workflows/ci.yml)
+[![CI](https://github.com/deveshgoreja/stockflow/actions/workflows/ci.yml/badge.svg)](https://github.com/deveshgoreja/stockflow/actions/workflows/ci.yml)
 
 **An inventory and order management system that stays correct when many requests hit it at once.**
 
@@ -85,7 +85,7 @@ scripts/      seed.py
 ## Quick start (Docker Compose)
 
 ```bash
-git clone https://github.com/__OWNER__/stockflow.git
+git clone https://github.com/deveshgoreja/stockflow.git
 cd stockflow
 cp .env.example .env
 docker compose up --build
