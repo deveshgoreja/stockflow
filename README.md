@@ -45,7 +45,7 @@ server.
 
 ## Tech stack
 
-| | |
+| Layer | Technology |
 |---|---|
 | Backend | Python 3.12, FastAPI, SQLAlchemy 2.0 (2.0-style API), Pydantic v2, Uvicorn, psycopg 3 |
 | Database | PostgreSQL 16, Alembic migrations |
@@ -55,13 +55,13 @@ server.
 ## Architecture
 
 ```mermaid
-flowchart LR
-    UI["React dashboard<br/>Vite · :5173"] -- "JSON / HTTP" --> R
-    subgraph API["FastAPI · :8000"]
-        R["Routers<br/>HTTP only"] --> S["Services<br/>business rules +<br/>transactions"]
+flowchart TB
+    UI["React dashboard (Vite, :5173)"] -- "JSON over HTTP" --> R
+    subgraph API["FastAPI (:8000)"]
+        R["Routers: HTTP only"] --> S["Services: business rules + transactions"]
         S --> M["SQLAlchemy models"]
     end
-    M --> DB[("PostgreSQL 16<br/>CHECK constraints,<br/>row locks, unique keys,<br/>append-only trigger")]
+    M --> DB[("PostgreSQL 16: constraints, row locks, append-only ledger")]
 ```
 
 Routers handle HTTP, services own the business rules and the transaction boundaries, and
@@ -71,8 +71,8 @@ and every non-obvious choice is explained in [docs/DECISIONS.md](docs/DECISIONS.
 ```text
 app/
   api/        routers: products, inventory, orders, reports
-  services/   product_service, inventory_service, order_service, report_service
-  models/     Product, Inventory, Order, OrderItem, StockMovement
+  services/   business logic and transactions
+  models/     SQLAlchemy ORM models
   schemas/    Pydantic request/response models
   database/   engine, per-request session
   core/       settings, error types and handlers
@@ -155,7 +155,7 @@ full suite:
 | Suite | Tests | What it proves |
 |---|---|---|
 | `tests/unit` | 43 | SKU/price validation, Decimal-exact totals, request-hash canonicalization, adjustment rules |
-| `tests/integration` | 50 | CRUD, duplicate SKU, the 20 → 23 keyboard scenario, multi-item orders, insufficient stock leaves everything unchanged, forced mid-transaction rollback, cancellation, price history, idempotent replay and key reuse, append-only ledger, migrations match the models, every endpoint documented |
+| `tests/integration` | 50 | Products, inventory, orders, cancellation, idempotency, rollback on failure, reports, schema |
 | `tests/concurrency` | 8 | Live Uvicorn server with real parallel HTTP requests (below); after **every** test, the ledger invariant is checked |
 
 The 3 warnings are a third-party deprecation notice from Starlette's test client.
@@ -183,22 +183,25 @@ invariant check failed on every test. With the lock restored, everything passes.
 All errors share one shape:
 `{"error": {"code": "...", "message": "...", "details": {...}}}`.
 
-| Method | Path | Notes |
+| Method | Path | What it does |
 |---|---|---|
-| `POST` | `/products` | `201`; duplicate SKU → `409 DUPLICATE_SKU` |
-| `GET` | `/products` | `?search=&category=&is_active=&limit=&offset=` |
-| `GET` | `/products/{id}` | |
-| `PATCH` | `/products/{id}` | partial update |
-| `GET` | `/inventory` | `?low_stock=true&limit=&offset=` |
-| `GET` | `/inventory/{product_id}` | |
-| `POST` | `/inventory/adjustments` | `{product_id, change_quantity, movement_type: RESTOCK \| ADJUSTMENT, note}` |
-| `GET` | `/inventory/movements` | `?product_id=&limit=&offset=`, newest first |
-| `POST` | `/orders` | header `Idempotency-Key` (optional); `201` created, `200` replay |
-| `GET` | `/orders` | `?status=CONFIRMED\|CANCELLED&limit=&offset=` |
-| `GET` | `/orders/{id}` | |
-| `POST` | `/orders/{id}/cancel` | `409 ORDER_ALREADY_CANCELLED` on repeat |
-| `GET` | `/reports/summary` | counts, low-stock count, sales totals |
-| `GET` | `/health` | `{"status": "ok", "database": "ok"}` |
+| `POST` | `/products` | Create a product (duplicate SKU → `409`) |
+| `GET` | `/products` | List; filter by `search`, `category`, `is_active` |
+| `GET` | `/products/{id}` | Get one product |
+| `PATCH` | `/products/{id}` | Partial update |
+| `GET` | `/inventory` | Stock levels; `low_stock=true` for alerts only |
+| `GET` | `/inventory/{product_id}` | Stock for one product |
+| `POST` | `/inventory/adjustments` | Restock or adjust (`RESTOCK` / `ADJUSTMENT`) |
+| `GET` | `/inventory/movements` | Ledger, newest first; filter by `product_id` |
+| `POST` | `/orders` | Place an order; optional `Idempotency-Key` header |
+| `GET` | `/orders` | List; filter by `status` |
+| `GET` | `/orders/{id}` | Get one order |
+| `POST` | `/orders/{id}/cancel` | Cancel and restore stock (repeat → `409`) |
+| `GET` | `/reports/summary` | Counts, low-stock count, sales totals |
+| `GET` | `/health` | API and database health |
+
+All list endpoints accept `limit` and `offset`. Creating returns `201`; an idempotent replay of
+`POST /orders` returns `200` with the original order.
 
 Example:
 
