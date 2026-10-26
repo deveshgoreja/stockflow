@@ -2,7 +2,6 @@
 .github
 .env
 .venv
-.claude
 **/__pycache__
 .pytest_cache
 .ruff_cache
