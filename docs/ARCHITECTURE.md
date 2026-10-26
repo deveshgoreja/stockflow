@@ -26,6 +26,20 @@ flowchart LR
 | Core | `app/core/` | Settings from environment variables, the error types, and the single JSON error format. |
 | Migrations | `migrations/` | Hand-written Alembic revisions: tables, `CHECK`s, indexes, and the append-only trigger. |
 
+```text
+app/
+  api/          routers: products, inventory, orders, reports
+  services/     product, inventory, order and report services
+  models/       Product, Inventory, Order, OrderItem, StockMovement
+  schemas/      Pydantic request/response models
+  database/     engine, per-request session
+  core/         settings, error types and handlers
+migrations/     Alembic revisions
+frontend/       React dashboard
+tests/          unit/ integration/ concurrency/
+scripts/        seed.py
+```
+
 Errors raised in services (`NotFoundError`, `ConflictError`, `BusinessRuleError`) are mapped to
 `404/409/400` by one exception handler, so every error response has the same shape:
 
@@ -136,3 +150,10 @@ applied. The concurrency suite checks both properties after every test
 client that converts error responses into an `ApiError(code, message, details)`, and a notice stack
 that shows every API error with its code and details, such as the per-product shortage list. Data
 loading uses a small `useApi` hook. There is no global state library.
+
+## Known limitations
+
+- No authentication or roles (out of scope), so idempotency keys are global rather than per client.
+- Offset pagination; keyset pagination would suit very large movement histories better.
+- Single warehouse, no payments or shipping, by design.
+- The Compose frontend runs the Vite dev server rather than a production static build.

@@ -2,87 +2,49 @@
 
 [![CI](https://github.com/deveshgoreja/stockflow/actions/workflows/ci.yml/badge.svg)](https://github.com/deveshgoreja/stockflow/actions/workflows/ci.yml)
 
-**An inventory and order management system that stays correct when many requests hit it at once.**
+An inventory and order management system that stays correct when many requests hit it at once.
+Built with FastAPI, PostgreSQL and React.
 
-StockFlow manages products, stock levels, multi-item orders, cancellations and a full audit trail
-of every stock change, with a FastAPI backend, PostgreSQL, and a React dashboard.
+![StockFlow dashboard](docs/images/dashboard.png)
 
-### Why it's not just CRUD
+## Why it's not just CRUD
 
-The interesting part is what happens under real-world pressure:
+The hard part of inventory software is correctness under pressure, and every case below is covered
+by an automated test against a real PostgreSQL database:
 
-- **100 people try to buy the last unit at the same moment.** Exactly one succeeds; 99 get a
-  clean `409`, never a negative stock count.
-- **Orders touching overlapping products arrive in different item orders.** No deadlocks, because
-  every transaction locks rows in the same global order.
-- **A customer double-clicks "Place order"** or a client retries after a timeout. The
-  `Idempotency-Key` header guarantees a single order, even when the duplicates arrive concurrently.
+- **100 people buy the last unit at the same moment.** Exactly one succeeds; the other 99 get a
+  clean "out of stock" error. Stock never goes negative.
+- **Orders for overlapping products arrive at once.** No deadlocks, because every transaction locks
+  rows in the same order.
+- **A customer double-clicks "Place order".** An idempotency key makes sure only one order is
+  created, even when the duplicates arrive in parallel.
 - **Twenty cancel requests race for the same order.** Stock is restored exactly once.
-- **Something fails half-way through an order.** The whole transaction rolls back: no partial
-  order, no lost stock, no orphan ledger rows.
+- **Something crashes half-way through an order.** Everything rolls back: no partial order and no
+  lost stock.
 
-Each of these has an automated test that runs against a real PostgreSQL database and a real HTTP
-server.
+**101 tests pass**, including 8 concurrency tests that fire real parallel HTTP requests at a live
+server. To prove the tests catch real bugs, I removed the database row lock and re-ran them:
+10 of 100 buyers "bought" the single unit, and the suite failed.
 
 ## Features
 
-- **Products:** create, update, list, search (name/SKU), filter by category and status. SKUs are
-  unique (enforced in the database); money is `NUMERIC(12,2)` / `Decimal`, never float.
-- **Inventory:** a separate table with one row per product; restocks and positive or negative
-  adjustments; a per-product low-stock threshold; `CHECK (quantity >= 0)`.
-- **Orders:** multi-item, all-or-nothing; captures unit prices at purchase time (later price changes
-  never alter history); rejects inactive products and insufficient stock, naming every short item.
-- **Cancellation:** restores stock and records it in the ledger; safe under concurrent requests.
-- **Idempotency:** the optional `Idempotency-Key` header; same key + same body replays the order,
-  same key + different body is a `409`.
-- **Audit ledger:** every stock change writes an append-only `stock_movements` row
-  (`RESTOCK`, `ADJUSTMENT`, `PURCHASE`, `CANCELLATION`) with the resulting quantity. A database
-  trigger forbids edits and deletes.
-- **Reports:** product counts, low-stock count, units in stock, confirmed/cancelled orders, units
-  sold and sales totals (confirmed orders only).
-- **Dashboard:** React UI for all of the above, with API errors (such as insufficient stock or
-  duplicate SKU) shown clearly.
+- **Products:** create, edit, search and filter; unique SKUs; prices stored as exact decimals.
+- **Inventory:** restocks, adjustments (e.g. damaged goods) and low-stock alerts.
+- **Orders:** multi-item and all-or-nothing; prices are locked in at purchase time.
+- **Cancellations:** return stock to inventory safely.
+- **Audit trail:** every stock change is recorded in a history that cannot be edited or deleted.
+- **Dashboard:** a React UI for all of the above, with clear error messages.
 
 ## Tech stack
 
-| Layer | Technology |
-|---|---|
-| Backend | Python 3.12, FastAPI, SQLAlchemy 2.0 (2.0-style API), Pydantic v2, Uvicorn, psycopg 3 |
-| Database | PostgreSQL 16, Alembic migrations |
-| Frontend | React 18 + Vite, plain JavaScript and CSS |
-| Tooling | pytest, Ruff, Docker, Docker Compose, GitHub Actions |
+**Backend:** Python 3.12, FastAPI, SQLAlchemy 2.0, Pydantic v2 ·
+**Database:** PostgreSQL 16, Alembic ·
+**Frontend:** React, Vite ·
+**Tooling:** pytest, Ruff, Docker Compose, GitHub Actions
 
-## Architecture
+## Quick start
 
-```mermaid
-flowchart TB
-    UI["React dashboard (Vite, :5173)"] -- "JSON over HTTP" --> R
-    subgraph API["FastAPI (:8000)"]
-        R["Routers: HTTP only"] --> S["Services: business rules + transactions"]
-        S --> M["SQLAlchemy models"]
-    end
-    M --> DB[("PostgreSQL 16: constraints, row locks, append-only ledger")]
-```
-
-Routers handle HTTP, services own the business rules and the transaction boundaries, and
-PostgreSQL enforces the invariants. More detail is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
-and every non-obvious choice is explained in [docs/DECISIONS.md](docs/DECISIONS.md).
-
-```text
-app/
-  api/        routers: products, inventory, orders, reports
-  services/   business logic and transactions
-  models/     SQLAlchemy ORM models
-  schemas/    Pydantic request/response models
-  database/   engine, per-request session
-  core/       settings, error types and handlers
-migrations/   Alembic revisions
-frontend/     React dashboard
-tests/        unit/ integration/ concurrency/
-scripts/      seed.py
-```
-
-## Quick start (Docker Compose)
+Requires Docker.
 
 ```bash
 git clone https://github.com/deveshgoreja/stockflow.git
@@ -91,153 +53,35 @@ cp .env.example .env
 docker compose up --build
 ```
 
-| Service | URL |
-|---|---|
-| Dashboard | http://localhost:5173 |
-| API | http://localhost:8000 |
-| Interactive API docs | http://localhost:8000/docs |
-
-The API container applies migrations on start-up. To load the demo dataset (20 products, about 30
-orders, a few cancellations and adjustments), run:
+Then load the demo data:
 
 ```bash
 docker compose exec api python -m scripts.seed
 ```
 
-Use `--reset` to wipe existing data first.
+Open the dashboard at http://localhost:5173. The API docs are at http://localhost:8000/docs.
 
-## Running locally without Docker
-
-You need Python 3.12, Node 20+, and a PostgreSQL 16 server with a `stockflow` role and the
-databases `stockflow` and `stockflow_test` (see `.env.example`).
-
-```bash
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env
-alembic upgrade head
-python -m scripts.seed
-uvicorn app.main:app --reload
-```
-
-```bash
-cd frontend && npm ci && npm run dev
-```
-
-## Running the tests
-
-The tests need a PostgreSQL database whose name ends in `_test`; they drop and rebuild its schema
-from the Alembic migrations. With the Compose database running (it creates `stockflow_test`
-automatically):
-
-```bash
-pytest
-```
-
-The connection comes from `TEST_DATABASE_URL`, which defaults to
-`postgresql+psycopg://stockflow:stockflow@localhost:5432/stockflow_test`. Lint and format:
-
-```bash
-ruff check . && ruff format --check .
-```
-
-### Test results
-
-Measured on Windows 11 with a local PostgreSQL 16.15, Python 3.12.10, three consecutive runs of the
-full suite:
-
-```text
-101 passed, 3 warnings in 41.55s
-101 passed, 3 warnings in 43.70s
-101 passed, 3 warnings in 42.59s
-```
-
-| Suite | Tests | What it proves |
-|---|---|---|
-| `tests/unit` | 43 | SKU/price validation, Decimal-exact totals, request-hash canonicalization, adjustment rules |
-| `tests/integration` | 50 | Products, inventory, orders, cancellation, idempotency, rollback on failure, reports, schema |
-| `tests/concurrency` | 8 | Live Uvicorn server with real parallel HTTP requests (below); after **every** test, the ledger invariant is checked |
-
-The 3 warnings are a third-party deprecation notice from Starlette's test client.
-
-Concurrency results (every one of these assertions passed in all three runs):
-
-| Scenario | Result |
-|---|---|
-| 100 concurrent buyers, 1 unit in stock | 1 × `201`, 99 × `409`, final stock 0, 1 order, 1 purchase movement |
-| 50 concurrent buyers × 2 units, 25 in stock | 12 × `201`, 38 × `409`, 1 unit left |
-| 60 concurrent orders over 5 shared products, shuffled/reversed item order | 60 × `201`, no deadlocks, stock totals reconcile exactly |
-| 40 overlapping multi-item orders over scarce stock | only `201`/`409`, no partial orders, totals reconcile |
-| 20 concurrent cancellations of one order | 1 × `200`, 19 × `409`, stock restored once |
-| 20 concurrent requests, one idempotency key | 1 × `201`, 19 × `200`, all the same order, stock decremented once |
-| 20 concurrent requests, one key, two different bodies | 1 order; mismatching bodies get `409 IDEMPOTENCY_KEY_REUSED` |
-| 45 mixed orders / cancellations / restocks | every response `200`/`201`/`409`; ledger balances |
-
-**Do the tests actually catch races?** As a check, the `FOR UPDATE` was temporarily removed from
-the inventory lock query and the concurrency suite re-run. It failed loudly: **10 of 100 buyers
-"bought" the single unit**, all 50 orders succeeded against 25 units of stock, and the ledger
-invariant check failed on every test. With the lock restored, everything passes.
-
-## API overview
-
-All errors share one shape:
-`{"error": {"code": "...", "message": "...", "details": {...}}}`.
-
-| Method | Path | What it does |
-|---|---|---|
-| `POST` | `/products` | Create a product (duplicate SKU → `409`) |
-| `GET` | `/products` | List; filter by `search`, `category`, `is_active` |
-| `GET` | `/products/{id}` | Get one product |
-| `PATCH` | `/products/{id}` | Partial update |
-| `GET` | `/inventory` | Stock levels; `low_stock=true` for alerts only |
-| `GET` | `/inventory/{product_id}` | Stock for one product |
-| `POST` | `/inventory/adjustments` | Restock or adjust (`RESTOCK` / `ADJUSTMENT`) |
-| `GET` | `/inventory/movements` | Ledger, newest first; filter by `product_id` |
-| `POST` | `/orders` | Place an order; optional `Idempotency-Key` header |
-| `GET` | `/orders` | List; filter by `status` |
-| `GET` | `/orders/{id}` | Get one order |
-| `POST` | `/orders/{id}/cancel` | Cancel and restore stock (repeat → `409`) |
-| `GET` | `/reports/summary` | Counts, low-stock count, sales totals |
-| `GET` | `/health` | API and database health |
-
-All list endpoints accept `limit` and `offset`. Creating returns `201`; an idempotent replay of
-`POST /orders` returns `200` with the original order.
-
-Example:
-
-```bash
-curl -X POST localhost:8000/orders \
-  -H 'Content-Type: application/json' -H 'Idempotency-Key: checkout-7f3a' \
-  -d '{"items": [{"product_id": 1, "quantity": 2}, {"product_id": 3, "quantity": 1}]}'
-```
+To run the tests: `pytest` (details in [docs/TESTING.md](docs/TESTING.md)).
 
 ## How overselling is prevented
 
-Several layers, each sufficient on its own for the case it covers:
-
-1. **Row locks in a single transaction.** Order creation locks the inventory rows it needs with
-   `SELECT … FOR UPDATE`, checks every line, then decrements. A competing transaction for the same
-   product waits; when it gets the lock, PostgreSQL hands it the *updated* quantity, so the second
-   buyer of the last unit sees 0 and gets a `409`.
-2. **Deterministic lock order.** Rows are always locked in ascending `product_id` order (one
-   `ORDER BY … FOR UPDATE` query), so two multi-item orders can never hold each other's rows in a
-   cycle. Deadlocks are prevented, not retried.
-3. **All-or-nothing.** The order, its items, the stock decrements and the ledger rows commit
+1. **Row locks.** An order locks the stock rows it needs (`SELECT … FOR UPDATE`) before checking
+   and reducing them, so two buyers can't both take the last unit.
+2. **Consistent lock order.** Rows are always locked in ascending product ID order, which makes
+   deadlocks impossible.
+3. **One transaction.** The order, its items, the stock changes and the history records all save
    together or not at all.
-4. **The database refuses negative stock.** `CHECK (quantity >= 0)` on `inventory` is a backstop
-   that holds even if application code were wrong.
-5. **Duplicate submissions are collapsed.** The `UNIQUE` idempotency key means retries and
-   double-clicks cannot create a second order, even when they arrive in parallel.
-6. **The ledger proves it.** Each product's stock always equals the sum of its movement rows, and
-   the concurrency tests assert this after every run.
+4. **A database safety net.** A `CHECK (quantity >= 0)` constraint rejects negative stock even if
+   the application code had a bug.
+5. **Idempotency keys.** A unique key on each order stops retries and double-clicks from creating
+   duplicates.
 
-The full walkthrough, including why the lock order rules out deadlocks, is in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+## Documentation
 
-## Known limitations
-
-- No authentication or roles, by design (out of scope). Idempotency keys are therefore global, not
-  per client.
-- Offset pagination; keyset pagination would suit very large movement histories better.
-- Single warehouse, no payments or shipping, by design.
-- The Compose frontend runs the Vite dev server rather than a production static build.
+| Document | Contents |
+|---|---|
+| [Architecture](docs/ARCHITECTURE.md) | Layers, the order transaction step by step, why the locking can't deadlock |
+| [Design decisions](docs/DECISIONS.md) | Every non-obvious choice, the alternative, and why |
+| [Testing](docs/TESTING.md) | How to run the tests and the full results |
+| [API reference](docs/API.md) | Endpoints, status codes, error format |
+| [Running without Docker](docs/DEVELOPMENT.md) | Local setup with Python, Node and PostgreSQL |
