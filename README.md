@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/deveshgoreja/stockflow/actions/workflows/ci.yml/badge.svg)](https://github.com/deveshgoreja/stockflow/actions/workflows/ci.yml)
 
+## What is StockFlow?
+
 An inventory and order management system that stays correct when many requests hit it at once.
 Built with FastAPI, PostgreSQL and React.
 
